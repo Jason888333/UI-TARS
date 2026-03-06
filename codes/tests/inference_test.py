@@ -83,8 +83,8 @@ if __name__ == '__main__':
     # Calculate the new dimensions
     new_height, new_width = smart_resize(height, width)
     new_coordinate = (
-        int(model_output_width / new_width * width),
-        int(model_output_height / new_height * height),
+        round(model_output_width / new_width * width),
+        round(model_output_height / new_height * height),
     )
     print(f'Resized dimensions: {new_width}, {new_height}')
     print(new_coordinate)

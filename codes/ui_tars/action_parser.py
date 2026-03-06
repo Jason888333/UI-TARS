@@ -11,16 +11,12 @@ MAX_RATIO = 200
 
 
 def convert_point_to_coordinates(text, is_answer=False):
-    # 匹配 <bbox> 后面的四个数字
+    # 匹配 <point> 后面的两个数字
     pattern = r"<point>(\d+)\s+(\d+)</point>"
 
     def replace_match(match):
-        x1, y1 = map(int, match.groups())
-        x = (x1 + x1) // 2  # 使用截断取整
-        y = (y1 + y1) // 2  # 使用截断取整
-        if is_answer:
-            return f"({x},{y})"  # 只返回 (x, y) 格式
-        return f"({x},{y})"  # 返回带标签的格式
+        x, y = map(int, match.groups())
+        return f"({x},{y})"
 
     # 去掉 [EOS] 并替换 <bbox> 坐标
     text = re.sub(r"\[EOS\]", "", text)
@@ -99,11 +95,8 @@ def linear_resize(height: int,
                   min_pixels: int = MIN_PIXELS,
                   max_pixels: int = MAX_PIXELS) -> tuple[int, int]:
     if width * height > max_pixels:
-        """
-        如果图片超过/低于像素限制，则计算一个缩放因子resize_factor，使图片的像素数缩小到等于或小于max_pixels。这个缩放因子是通过开平方根计算的，确保纵横比保持不变,这样原始的相对坐标可以不经转换直接复用
-        """
         resize_factor = math.sqrt(max_pixels / (width * height))
-        width, height = int(width * resize_factor), int(height * resize_factor)
+        width, height = round(width * resize_factor), round(height * resize_factor)
     if width * height < min_pixels:
         resize_factor = math.sqrt(min_pixels / (width * height))
         width, height = math.ceil(width * resize_factor), math.ceil(
@@ -276,25 +269,54 @@ def parse_action_to_structure_output(text,
     return actions
 
 
+def _to_screen_coords(normalized_x: float, normalized_y: float,
+                      image_width: int, image_height: int,
+                      scale_factor: float = 1.0) -> tuple[int, int]:
+    """Convert normalized (0-1) coordinates to screen pixel coordinates.
+
+    Uses round() instead of int() to avoid systematic truncation bias.
+    Clamps to screen bounds to prevent out-of-bounds clicks.
+    Applies DPI scale factor for HiDPI displays.
+
+    Args:
+        normalized_x: X coordinate in 0-1 range
+        normalized_y: Y coordinate in 0-1 range
+        image_width: Screenshot width in pixels
+        image_height: Screenshot height in pixels
+        scale_factor: DPI scale factor (e.g., 2.0 for Retina). The screenshot
+            is captured at image_width x image_height, but the logical screen
+            is image_width/scale_factor x image_height/scale_factor.
+
+    Returns:
+        (x, y) pixel coordinates on the logical screen
+    """
+    screen_width = image_width / scale_factor
+    screen_height = image_height / scale_factor
+    x = round(normalized_x * screen_width)
+    y = round(normalized_y * screen_height)
+    x = max(0, min(x, round(screen_width) - 1))
+    y = max(0, min(y, round(screen_height) - 1))
+    return x, y
+
+
 def parsing_response_to_pyautogui_code(responses,
                                        image_height: int,
                                        image_width: int,
-                                       input_swap: bool = True) -> str:
-    '''
-    将M模型的输出解析为OSWorld中的action，生成pyautogui代码字符串
-    参数:
-        response: 包含模型输出的字典，结构类似于：
-        {
-            "action_type": "hotkey",
-            "action_inputs": {
-                "hotkey": "v ctrl",
-                "start_box": None,
-                "end_box": None
-            }
-        }
-    返回:
-        生成的pyautogui代码字符串
-    '''
+                                       input_swap: bool = True,
+                                       scale_factor: float = 1.0) -> str:
+    """Parse model output into pyautogui code strings.
+
+    Args:
+        responses: Dict or list of dicts with action_type and action_inputs.
+        image_height: Screenshot height in pixels.
+        image_width: Screenshot width in pixels.
+        input_swap: Whether to use clipboard paste for typing (default True).
+        scale_factor: DPI scale factor (e.g., 2.0 for Retina displays where
+            screenshot pixels != logical screen pixels).
+
+    Returns:
+        Generated pyautogui code string.
+    """
 
     pyautogui_code = f"import pyautogui\nimport time\n"
     if isinstance(responses, dict):
@@ -428,12 +450,14 @@ def parsing_response_to_pyautogui_code(responses,
             if start_box and end_box:
                 x1, y1, x2, y2 = eval(
                     start_box)  # Assuming box is in [x1, y1, x2, y2]
-                sx = round(float((x1 + x2) / 2) * image_width, 3)
-                sy = round(float((y1 + y2) / 2) * image_height, 3)
+                sx, sy = _to_screen_coords(
+                    (x1 + x2) / 2, (y1 + y2) / 2,
+                    image_width, image_height, scale_factor)
                 x1, y1, x2, y2 = eval(
                     end_box)  # Assuming box is in [x1, y1, x2, y2]
-                ex = round(float((x1 + x2) / 2) * image_width, 3)
-                ey = round(float((y1 + y2) / 2) * image_height, 3)
+                ex, ey = _to_screen_coords(
+                    (x1 + x2) / 2, (y1 + y2) / 2,
+                    image_width, image_height, scale_factor)
                 pyautogui_code += (
                     f"\npyautogui.moveTo({sx}, {sy})\n"
                     f"\npyautogui.dragTo({ex}, {ey}, duration=1.0)\n")
@@ -444,11 +468,9 @@ def parsing_response_to_pyautogui_code(responses,
             if start_box:
                 x1, y1, x2, y2 = eval(
                     start_box)  # Assuming box is in [x1, y1, x2, y2]
-                x = round(float((x1 + x2) / 2) * image_width, 3)
-                y = round(float((y1 + y2) / 2) * image_height, 3)
-
-                # # 先点对应区域，再滚动
-                # pyautogui_code += f"\npyautogui.click({x}, {y}, button='left')"
+                x, y = _to_screen_coords(
+                    (x1 + x2) / 2, (y1 + y2) / 2,
+                    image_width, image_height, scale_factor)
             else:
                 x = None
                 y = None
@@ -479,8 +501,9 @@ def parsing_response_to_pyautogui_code(responses,
                     x1, y1 = start_box
                     x2 = x1
                     y2 = y1
-                x = round(float((x1 + x2) / 2) * image_width, 3)
-                y = round(float((y1 + y2) / 2) * image_height, 3)
+                x, y = _to_screen_coords(
+                    (x1 + x2) / 2, (y1 + y2) / 2,
+                    image_width, image_height, scale_factor)
                 if action_type == "left_single" or action_type == "click":
                     pyautogui_code += f"\npyautogui.click({x}, {y}, button='left')"
                 elif action_type == "left_double":
