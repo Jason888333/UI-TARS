@@ -1,0 +1,11 @@
+# Environment and secrets
+.env
+.env.local
+*.env
+
+# Virtual environments
+.venv
+venv
+
+# OS
+.DS_Store
