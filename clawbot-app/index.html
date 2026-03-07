@@ -348,6 +348,11 @@
         <option value="new">Nieuwe sessie</option>
       </select>
     </div>
+    <div class="setting-row">
+      <label>Gateway Token</label>
+      <input type="password" id="gatewayToken" placeholder="Optioneel"
+        style="background:var(--bg);border:1px solid var(--surface2);border-radius:6px;padding:6px 10px;color:var(--text);font-size:13px;width:140px">
+    </div>
   </div>
 
   <!-- Connection bar -->
@@ -494,24 +499,60 @@
       };
     }
 
+    let connectReqId = null;
+
+    function generateId() {
+      return 'clawbot-' + Math.random().toString(36).slice(2, 10);
+    }
+
     function handleChallenge(data) {
       const nonce = data.payload?.nonce || data.nonce;
-      const ts = data.payload?.ts || data.ts || Date.now();
 
-      // Respond to the challenge
-      const response = {
-        type: 'event',
-        event: 'connect.response',
-        payload: {
-          nonce: nonce,
-          ts: ts,
-          client: 'clawbot-controller',
-          version: '1.0.0'
+      // Get gateway token from settings (if configured)
+      const token = document.getElementById('gatewayToken').value.trim();
+
+      connectReqId = generateId();
+
+      // Send proper connect request per OpenClaw gateway protocol
+      const connectReq = {
+        type: 'req',
+        id: connectReqId,
+        method: 'connect',
+        params: {
+          minProtocol: 3,
+          maxProtocol: 3,
+          client: {
+            id: 'clawbot-controller',
+            version: '1.0.0',
+            platform: 'web',
+            mode: 'operator'
+          },
+          role: 'operator',
+          scopes: ['operator.read', 'operator.write'],
+          caps: [],
+          commands: [],
+          permissions: {},
+          auth: token ? { token: token } : {},
+          locale: navigator.language || 'nl-NL',
+          userAgent: 'clawbot-controller/1.0.0',
+          device: {
+            id: getDeviceId(),
+            nonce: nonce
+          }
         }
       };
 
-      ws.send(JSON.stringify(response));
+      ws.send(JSON.stringify(connectReq));
       addMsg('system', 'Authenticatie...');
+    }
+
+    function getDeviceId() {
+      let id = localStorage.getItem('clawbot-device-id');
+      if (!id) {
+        id = 'clawbot-' + crypto.randomUUID();
+        localStorage.setItem('clawbot-device-id', id);
+      }
+      return id;
     }
 
     function handleResponse(data) {
@@ -521,18 +562,40 @@
         return;
       }
 
-      // Handle successful auth / welcome
-      if (data.type === 'event' && (data.event === 'connect.ack' || data.event === 'connect.welcome' || data.event === 'connected')) {
-        isAuthenticated = true;
-        setStatus('connected', 'Verbonden');
-        addMsg('system', 'Verbonden met ClawBot!');
-        // Flush any pending messages
-        pendingMessages.forEach(msg => wsSend(msg));
-        pendingMessages = [];
+      // Handle connect response (hello-ok)
+      if (data.type === 'res' && data.id === connectReqId) {
+        if (data.ok) {
+          isAuthenticated = true;
+          setStatus('connected', 'Verbonden');
+          addMsg('system', 'Verbonden met ClawBot!');
+          // Save device token if provided
+          if (data.payload?.auth?.deviceToken) {
+            localStorage.setItem('clawbot-device-token', data.payload.auth.deviceToken);
+          }
+          // Flush pending messages
+          pendingMessages.forEach(msg => wsSend(msg));
+          pendingMessages = [];
+        } else {
+          const reason = data.error?.message || data.payload?.message || 'Authenticatie mislukt';
+          addMsg('error', reason);
+          setStatus('', 'Auth mislukt');
+        }
         return;
       }
 
-      // If we get any non-error response after challenge, assume we're authenticated
+      // Handle successful auth via event
+      if (data.type === 'event' && (data.event === 'connect.ack' || data.event === 'connect.welcome' || data.event === 'connected')) {
+        if (!isAuthenticated) {
+          isAuthenticated = true;
+          setStatus('connected', 'Verbonden');
+          addMsg('system', 'Verbonden met ClawBot!');
+          pendingMessages.forEach(msg => wsSend(msg));
+          pendingMessages = [];
+        }
+        return;
+      }
+
+      // If we get any non-error response after challenge, assume authenticated
       if (!isAuthenticated && data.type !== 'error') {
         isAuthenticated = true;
         setStatus('connected', 'Verbonden');
@@ -545,6 +608,10 @@
       if (data.type === 'response' || data.type === 'message') {
         const text = data.content || data.text || data.message || JSON.stringify(data);
         addMsg('bot', text);
+      } else if (data.type === 'res' && data.ok && data.payload) {
+        // Response to a request we sent (e.g. message response)
+        const text = data.payload?.content || data.payload?.text || data.payload?.message;
+        if (text) addMsg('bot', text);
       } else if (data.type === 'event' && data.event === 'agent.message') {
         const text = data.payload?.content || data.payload?.text || JSON.stringify(data.payload);
         addMsg('bot', text);
@@ -553,22 +620,15 @@
       } else if (data.type === 'event' && data.event === 'agent.done') {
         const typing = chatLog.querySelector('.typing');
         if (typing) typing.remove();
-      } else if (data.type === 'error') {
-        addMsg('error', data.message || data.error || data.payload?.message || 'Fout opgetreden');
-      } else if (data.type === 'status') {
-        addMsg('system', data.message || data.status || '');
-      } else if (data.type === 'thinking' || data.type === 'progress') {
-        showTyping();
-      } else if (data.content) {
-        const text = typeof data.content === 'string' ? data.content : JSON.stringify(data.content);
-        addMsg('bot', text);
+      } else if (data.type === 'error' || (data.type === 'res' && !data.ok)) {
+        addMsg('error', data.error?.message || data.message || data.payload?.message || 'Fout opgetreden');
       } else if (data.type === 'event') {
-        // Other events - show in system log if they have useful info
         if (data.payload?.message || data.payload?.content) {
           addMsg('system', data.payload.message || data.payload.content);
         }
-      } else {
-        addMsg('bot', JSON.stringify(data, null, 2));
+      } else if (data.content) {
+        const text = typeof data.content === 'string' ? data.content : JSON.stringify(data.content);
+        addMsg('bot', text);
       }
     }
 
@@ -588,11 +648,16 @@
       const agent = document.getElementById('agentSelect').value;
       const session = document.getElementById('sessionSelect').value;
 
+      // Use OpenClaw request format
       const payload = {
-        type: 'message',
-        content: text,
-        agent: agent,
-        session: session
+        type: 'req',
+        id: generateId(),
+        method: 'message.send',
+        params: {
+          agent: agent,
+          session: session,
+          content: text
+        }
       };
 
       if (isAuthenticated) {
