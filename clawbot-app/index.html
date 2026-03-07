@@ -434,9 +434,18 @@
     const statusText = document.getElementById('statusText');
     const wsUrl = document.getElementById('wsUrl');
 
-    // Load saved URL
+    const gatewayTokenInput = document.getElementById('gatewayToken');
+
+    // Load saved settings
     const savedUrl = localStorage.getItem('clawbot-ws-url');
     if (savedUrl) wsUrl.value = savedUrl;
+    const savedToken = localStorage.getItem('clawbot-gateway-token');
+    if (savedToken) gatewayTokenInput.value = savedToken;
+
+    // Save token on change
+    gatewayTokenInput.addEventListener('input', () => {
+      localStorage.setItem('clawbot-gateway-token', gatewayTokenInput.value);
+    });
 
     function setStatus(state, text) {
       statusDot.className = 'status-dot ' + state;
@@ -462,6 +471,7 @@
       localStorage.setItem('clawbot-ws-url', url);
       isAuthenticated = false;
       pendingMessages = [];
+      deviceKeys = null; // Force fresh signature with current scopes
       setStatus('connecting', 'Verbinden...');
       addMsg('system', 'Verbinden met ' + url + '...');
 
