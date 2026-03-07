@@ -1,0 +1,589 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#ef4444">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="manifest" href="manifest.json">
+  <title>ClawBot Controller</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    :root {
+      --bg: #0f172a;
+      --surface: #1e293b;
+      --surface2: #334155;
+      --accent: #ef4444;
+      --accent-glow: rgba(239, 68, 68, 0.3);
+      --text: #f1f5f9;
+      --text-dim: #94a3b8;
+      --success: #22c55e;
+      --warning: #eab308;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100dvh;
+      overflow-x: hidden;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    /* Header */
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 16px 20px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--surface2);
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+
+    .header h1 {
+      font-size: 20px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .header h1 .claw { font-size: 24px; }
+
+    .status {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      color: var(--text-dim);
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--accent);
+    }
+
+    .status-dot.connected { background: var(--success); }
+    .status-dot.connecting { background: var(--warning); animation: pulse 1s infinite; }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.3; }
+    }
+
+    /* Connection bar */
+    .connection-bar {
+      padding: 12px 20px;
+      background: var(--surface);
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .connection-bar input {
+      flex: 1;
+      background: var(--bg);
+      border: 1px solid var(--surface2);
+      border-radius: 8px;
+      padding: 10px 14px;
+      color: var(--text);
+      font-size: 14px;
+      outline: none;
+    }
+
+    .connection-bar input:focus { border-color: var(--accent); }
+
+    .btn-connect {
+      background: var(--accent);
+      color: white;
+      border: none;
+      border-radius: 8px;
+      padding: 10px 16px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+
+    .btn-connect:active { transform: scale(0.96); }
+    .btn-connect.connected { background: var(--success); }
+
+    /* Main content */
+    .content {
+      padding: 16px 20px;
+      padding-bottom: 160px;
+    }
+
+    /* Quick actions */
+    .section-title {
+      font-size: 13px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--text-dim);
+      margin-bottom: 12px;
+    }
+
+    .quick-actions {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 10px;
+      margin-bottom: 24px;
+    }
+
+    .action-btn {
+      background: var(--surface);
+      border: 1px solid var(--surface2);
+      border-radius: 12px;
+      padding: 16px;
+      color: var(--text);
+      cursor: pointer;
+      text-align: left;
+      transition: all 0.15s;
+    }
+
+    .action-btn:active {
+      transform: scale(0.97);
+      border-color: var(--accent);
+      box-shadow: 0 0 12px var(--accent-glow);
+    }
+
+    .action-btn .icon { font-size: 24px; margin-bottom: 6px; }
+    .action-btn .label { font-size: 14px; font-weight: 600; }
+    .action-btn .desc { font-size: 11px; color: var(--text-dim); margin-top: 2px; }
+
+    /* Chat log */
+    .chat-log {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      margin-bottom: 16px;
+    }
+
+    .msg {
+      padding: 12px 16px;
+      border-radius: 12px;
+      font-size: 14px;
+      line-height: 1.5;
+      max-width: 85%;
+      word-wrap: break-word;
+    }
+
+    .msg.user {
+      background: var(--accent);
+      color: white;
+      align-self: flex-end;
+      border-bottom-right-radius: 4px;
+    }
+
+    .msg.bot {
+      background: var(--surface);
+      border: 1px solid var(--surface2);
+      align-self: flex-start;
+      border-bottom-left-radius: 4px;
+    }
+
+    .msg.system {
+      background: transparent;
+      color: var(--text-dim);
+      font-size: 12px;
+      text-align: center;
+      align-self: center;
+    }
+
+    .msg.error {
+      background: rgba(239, 68, 68, 0.15);
+      border: 1px solid rgba(239, 68, 68, 0.3);
+      color: #fca5a5;
+      align-self: center;
+      text-align: center;
+    }
+
+    .typing {
+      display: flex;
+      gap: 4px;
+      padding: 12px 16px;
+      align-self: flex-start;
+    }
+
+    .typing span {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--text-dim);
+      animation: bounce 1.4s infinite;
+    }
+
+    .typing span:nth-child(2) { animation-delay: 0.2s; }
+    .typing span:nth-child(3) { animation-delay: 0.4s; }
+
+    @keyframes bounce {
+      0%, 60%, 100% { transform: translateY(0); }
+      30% { transform: translateY(-6px); }
+    }
+
+    /* Input bar */
+    .input-bar {
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      background: var(--surface);
+      border-top: 1px solid var(--surface2);
+      padding: 12px 16px;
+      padding-bottom: max(12px, env(safe-area-inset-bottom));
+      display: flex;
+      gap: 10px;
+      align-items: flex-end;
+    }
+
+    .input-bar textarea {
+      flex: 1;
+      background: var(--bg);
+      border: 1px solid var(--surface2);
+      border-radius: 20px;
+      padding: 10px 16px;
+      color: var(--text);
+      font-size: 16px;
+      font-family: inherit;
+      resize: none;
+      outline: none;
+      max-height: 120px;
+      line-height: 1.4;
+    }
+
+    .input-bar textarea:focus { border-color: var(--accent); }
+
+    .btn-send {
+      width: 44px;
+      height: 44px;
+      border-radius: 50%;
+      background: var(--accent);
+      border: none;
+      color: white;
+      font-size: 20px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+
+    .btn-send:disabled { opacity: 0.4; }
+    .btn-send:active { transform: scale(0.92); }
+
+    /* Settings panel */
+    .settings-toggle {
+      background: none;
+      border: none;
+      color: var(--text-dim);
+      font-size: 20px;
+      cursor: pointer;
+      padding: 4px;
+    }
+
+    .settings-panel {
+      display: none;
+      background: var(--surface);
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--surface2);
+    }
+
+    .settings-panel.open { display: block; }
+
+    .setting-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 8px 0;
+    }
+
+    .setting-row label { font-size: 14px; }
+
+    .setting-row select {
+      background: var(--bg);
+      border: 1px solid var(--surface2);
+      border-radius: 6px;
+      padding: 6px 10px;
+      color: var(--text);
+      font-size: 13px;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Header -->
+  <div class="header">
+    <h1><span class="claw">&#129438;</span> ClawBot</h1>
+    <div style="display:flex;align-items:center;gap:12px">
+      <div class="status">
+        <div class="status-dot" id="statusDot"></div>
+        <span id="statusText">Niet verbonden</span>
+      </div>
+      <button class="settings-toggle" onclick="toggleSettings()">&#9881;</button>
+    </div>
+  </div>
+
+  <!-- Settings -->
+  <div class="settings-panel" id="settingsPanel">
+    <div class="setting-row">
+      <label>Agent</label>
+      <select id="agentSelect">
+        <option value="main">main</option>
+        <option value="browser">browser</option>
+        <option value="coder">coder</option>
+      </select>
+    </div>
+    <div class="setting-row">
+      <label>Sessie</label>
+      <select id="sessionSelect">
+        <option value="main">main</option>
+        <option value="new">Nieuwe sessie</option>
+      </select>
+    </div>
+  </div>
+
+  <!-- Connection bar -->
+  <div class="connection-bar">
+    <input type="text" id="wsUrl" value="ws://127.0.0.1:18789" placeholder="WebSocket URL">
+    <button class="btn-connect" id="btnConnect" onclick="toggleConnection()">Verbind</button>
+  </div>
+
+  <!-- Content -->
+  <div class="content">
+    <div class="section-title">Snelle acties</div>
+    <div class="quick-actions">
+      <button class="action-btn" onclick="sendQuick('open Google in mijn browser')">
+        <div class="icon">&#127760;</div>
+        <div class="label">Google</div>
+        <div class="desc">Open browser</div>
+      </button>
+      <button class="action-btn" onclick="sendQuick('open mijn Gmail account')">
+        <div class="icon">&#9993;&#65039;</div>
+        <div class="label">Gmail</div>
+        <div class="desc">Open e-mail</div>
+      </button>
+      <button class="action-btn" onclick="sendQuick('maak een screenshot en sla op op het bureaublad')">
+        <div class="icon">&#128247;</div>
+        <div class="label">Screenshot</div>
+        <div class="desc">Maak schermafbeelding</div>
+      </button>
+      <button class="action-btn" onclick="sendQuick('open Finder')">
+        <div class="icon">&#128193;</div>
+        <div class="label">Finder</div>
+        <div class="desc">Open bestanden</div>
+      </button>
+      <button class="action-btn" onclick="sendQuick('open YouTube in mijn browser')">
+        <div class="icon">&#9654;&#65039;</div>
+        <div class="label">YouTube</div>
+        <div class="desc">Open video's</div>
+      </button>
+      <button class="action-btn" onclick="sendQuick('open de terminal')">
+        <div class="icon">&#128187;</div>
+        <div class="label">Terminal</div>
+        <div class="desc">Open terminal</div>
+      </button>
+      <button class="action-btn" onclick="sendQuick('zet al mijn ongelezen mails op gelezen')">
+        <div class="icon">&#9989;</div>
+        <div class="label">Mail gelezen</div>
+        <div class="desc">Markeer alles gelezen</div>
+      </button>
+      <button class="action-btn" onclick="sendQuick('wat is de tijd?')">
+        <div class="icon">&#128336;</div>
+        <div class="label">Tijd</div>
+        <div class="desc">Vraag de tijd</div>
+      </button>
+    </div>
+
+    <div class="section-title">Berichten</div>
+    <div class="chat-log" id="chatLog">
+      <div class="msg system">Verbind met ClawBot om te beginnen</div>
+    </div>
+  </div>
+
+  <!-- Input bar -->
+  <div class="input-bar">
+    <textarea id="msgInput" rows="1" placeholder="Geef ClawBot een opdracht..."
+      oninput="autoResize(this)" onkeydown="handleKey(event)"></textarea>
+    <button class="btn-send" id="btnSend" onclick="sendMessage()" disabled>&#10148;</button>
+  </div>
+
+  <script>
+    let ws = null;
+    let isConnected = false;
+
+    const chatLog = document.getElementById('chatLog');
+    const msgInput = document.getElementById('msgInput');
+    const btnSend = document.getElementById('btnSend');
+    const btnConnect = document.getElementById('btnConnect');
+    const statusDot = document.getElementById('statusDot');
+    const statusText = document.getElementById('statusText');
+    const wsUrl = document.getElementById('wsUrl');
+
+    // Load saved URL
+    const savedUrl = localStorage.getItem('clawbot-ws-url');
+    if (savedUrl) wsUrl.value = savedUrl;
+
+    function setStatus(state, text) {
+      statusDot.className = 'status-dot ' + state;
+      statusText.textContent = text;
+      btnConnect.textContent = state === 'connected' ? 'Verbreken' : 'Verbind';
+      btnConnect.className = 'btn-connect ' + state;
+      btnSend.disabled = state !== 'connected';
+      isConnected = state === 'connected';
+    }
+
+    function toggleConnection() {
+      if (isConnected) {
+        ws?.close();
+        return;
+      }
+      connect();
+    }
+
+    function connect() {
+      const url = wsUrl.value.trim();
+      if (!url) return;
+
+      localStorage.setItem('clawbot-ws-url', url);
+      setStatus('connecting', 'Verbinden...');
+      addMsg('system', 'Verbinden met ' + url + '...');
+
+      try {
+        ws = new WebSocket(url);
+      } catch (e) {
+        setStatus('', 'Fout');
+        addMsg('error', 'Ongeldig WebSocket adres');
+        return;
+      }
+
+      ws.onopen = () => {
+        setStatus('connected', 'Verbonden');
+        addMsg('system', 'Verbonden met ClawBot!');
+      };
+
+      ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          handleResponse(data);
+        } catch {
+          // Plain text response
+          addMsg('bot', event.data);
+        }
+      };
+
+      ws.onclose = () => {
+        setStatus('', 'Niet verbonden');
+        addMsg('system', 'Verbinding verbroken');
+        isConnected = false;
+      };
+
+      ws.onerror = () => {
+        setStatus('', 'Fout');
+        addMsg('error', 'Kan niet verbinden. Is OpenClaw gateway actief?');
+      };
+    }
+
+    function handleResponse(data) {
+      // Handle different OpenClaw message formats
+      if (data.type === 'response' || data.type === 'message') {
+        const text = data.content || data.text || data.message || JSON.stringify(data);
+        addMsg('bot', text);
+      } else if (data.type === 'error') {
+        addMsg('error', data.message || data.error || 'Fout opgetreden');
+      } else if (data.type === 'status') {
+        addMsg('system', data.message || data.status || '');
+      } else if (data.type === 'thinking' || data.type === 'progress') {
+        // Show typing indicator briefly
+        showTyping();
+      } else if (data.content) {
+        // Fallback: if there's content, show it
+        const text = typeof data.content === 'string' ? data.content : JSON.stringify(data.content);
+        addMsg('bot', text);
+      } else {
+        addMsg('bot', JSON.stringify(data, null, 2));
+      }
+    }
+
+    function sendMessage() {
+      const text = msgInput.value.trim();
+      if (!text || !isConnected) return;
+
+      addMsg('user', text);
+      showTyping();
+
+      const agent = document.getElementById('agentSelect').value;
+      const session = document.getElementById('sessionSelect').value;
+
+      const payload = {
+        type: 'message',
+        content: text,
+        agent: agent,
+        session: session
+      };
+
+      ws.send(JSON.stringify(payload));
+      msgInput.value = '';
+      autoResize(msgInput);
+    }
+
+    function sendQuick(text) {
+      if (!isConnected) {
+        addMsg('error', 'Niet verbonden. Verbind eerst met ClawBot.');
+        return;
+      }
+      msgInput.value = text;
+      sendMessage();
+    }
+
+    function addMsg(type, text) {
+      // Remove typing indicator
+      const typing = chatLog.querySelector('.typing');
+      if (typing) typing.remove();
+
+      const div = document.createElement('div');
+      div.className = 'msg ' + type;
+      div.textContent = text;
+      chatLog.appendChild(div);
+      div.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    }
+
+    function showTyping() {
+      if (chatLog.querySelector('.typing')) return;
+      const div = document.createElement('div');
+      div.className = 'typing';
+      div.innerHTML = '<span></span><span></span><span></span>';
+      chatLog.appendChild(div);
+      div.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    }
+
+    function autoResize(el) {
+      el.style.height = 'auto';
+      el.style.height = Math.min(el.scrollHeight, 120) + 'px';
+    }
+
+    function handleKey(e) {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        sendMessage();
+      }
+    }
+
+    function toggleSettings() {
+      document.getElementById('settingsPanel').classList.toggle('open');
+    }
+
+    // Auto-connect on load if URL is saved
+    if (savedUrl) {
+      setTimeout(connect, 500);
+    }
+  </script>
+</body>
+</html>
