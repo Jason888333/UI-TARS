@@ -739,15 +739,16 @@
       const agent = document.getElementById('agentSelect').value;
       const session = document.getElementById('sessionSelect').value;
 
-      // Use OpenClaw request format
+      // Use OpenClaw chat.send format
+      const sessionKey = 'agent:' + agent + ':' + session;
       const payload = {
         type: 'req',
         id: generateId(),
         method: 'chat.send',
         params: {
-          agent: agent,
-          session: session,
-          content: text
+          sessionKey: sessionKey,
+          message: text,
+          idempotencyKey: crypto.randomUUID()
         }
       };
 
