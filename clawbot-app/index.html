@@ -488,6 +488,8 @@
       };
 
       ws.onmessage = (event) => {
+        // Log raw string BEFORE any parsing
+        console.log('[ClawBot WIRE]', typeof event.data, event.data?.substring?.(0, 500) || event.data);
         try {
           const data = JSON.parse(event.data);
           handleResponse(data);
@@ -647,6 +649,9 @@
     }
 
     function handleResponse(data) {
+      // === RAW DEBUG LOG (first thing!) ===
+      console.log('[ClawBot RAW] ←', JSON.stringify(data).substring(0, 2000));
+
       // Handle challenge handshake
       if (data.type === 'event' && data.event === 'connect.challenge') {
         handleChallenge(data);
@@ -853,9 +858,25 @@
       const typing = chatLog.querySelector('.typing');
       if (typing) typing.remove();
 
+      // SAFETY: never show [object Object]
+      let displayText;
+      if (text === null || text === undefined) {
+        displayText = '(leeg)';
+      } else if (typeof text === 'string') {
+        displayText = text;
+      } else {
+        try { displayText = JSON.stringify(text, null, 2); } catch { displayText = String(text); }
+      }
+
       const div = document.createElement('div');
       div.className = 'msg ' + type;
-      div.textContent = text;
+      // Use <pre> style for JSON objects so they're readable
+      if (displayText.startsWith('{') || displayText.startsWith('[')) {
+        div.style.whiteSpace = 'pre-wrap';
+        div.style.fontFamily = 'monospace';
+        div.style.fontSize = '12px';
+      }
+      div.textContent = displayText;
       chatLog.appendChild(div);
       div.scrollIntoView({ behavior: 'smooth', block: 'end' });
     }
