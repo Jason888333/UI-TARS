@@ -695,32 +695,88 @@
         pendingMessages = [];
       }
 
-      // Handle different OpenClaw message formats
-      if (data.type === 'response' || data.type === 'message') {
-        const text = data.content || data.text || data.message || JSON.stringify(data);
-        addMsg('bot', text);
-      } else if (data.type === 'res' && data.ok && data.payload) {
-        // Response to a request we sent (e.g. message response)
-        const text = data.payload?.content || data.payload?.text || data.payload?.message;
-        if (text) addMsg('bot', text);
-      } else if (data.type === 'event' && data.event === 'agent.message') {
-        const text = data.payload?.content || data.payload?.text || JSON.stringify(data.payload);
-        addMsg('bot', text);
-      } else if (data.type === 'event' && (data.event === 'agent.thinking' || data.event === 'agent.working')) {
-        showTyping();
-      } else if (data.type === 'event' && data.event === 'agent.done') {
-        const typing = chatLog.querySelector('.typing');
-        if (typing) typing.remove();
-      } else if (data.type === 'error' || (data.type === 'res' && !data.ok)) {
-        addMsg('error', data.error?.message || data.message || data.payload?.message || 'Fout opgetreden');
-      } else if (data.type === 'event') {
-        if (data.payload?.message || data.payload?.content) {
-          addMsg('system', data.payload.message || data.payload.content);
-        }
-      } else if (data.content) {
-        const text = typeof data.content === 'string' ? data.content : JSON.stringify(data.content);
-        addMsg('bot', text);
+      // Helper to extract text from any object
+      function extractText(obj) {
+        if (!obj) return null;
+        if (typeof obj === 'string') return obj;
+        // Try common text fields
+        return obj.text || obj.content || obj.message || obj.delta || obj.body || null;
       }
+
+      // Handle chat events (streamed responses from agent)
+      if (data.type === 'event' && data.event?.startsWith('chat:')) {
+        const p = data.payload;
+        if (data.event === 'chat:delta' || data.event === 'chat:message') {
+          const text = extractText(p) || (p?.delta) || (p?.content?.[0]?.text);
+          if (text) addMsg('bot', text);
+        } else if (data.event === 'chat:final') {
+          // Remove typing, show final message if not already shown
+          const typing = chatLog.querySelector('.typing');
+          if (typing) typing.remove();
+          const text = extractText(p) || (p?.content?.[0]?.text);
+          if (text) addMsg('bot', text);
+        } else if (data.event === 'chat:thinking') {
+          showTyping();
+        } else if (data.event === 'chat:error') {
+          addMsg('error', extractText(p) || JSON.stringify(p));
+        }
+        return;
+      }
+
+      // Handle agent events
+      if (data.type === 'event' && data.event?.startsWith('agent.')) {
+        const p = data.payload;
+        if (data.event === 'agent.message') {
+          addMsg('bot', extractText(p) || JSON.stringify(p));
+        } else if (data.event === 'agent.thinking' || data.event === 'agent.working') {
+          showTyping();
+        } else if (data.event === 'agent.done') {
+          const typing = chatLog.querySelector('.typing');
+          if (typing) typing.remove();
+        }
+        return;
+      }
+
+      // Handle lifecycle events
+      if (data.type === 'event' && data.event?.startsWith('lifecycle:')) {
+        if (data.event === 'lifecycle:start') showTyping();
+        if (data.event === 'lifecycle:end') {
+          const typing = chatLog.querySelector('.typing');
+          if (typing) typing.remove();
+        }
+        return;
+      }
+
+      // Handle res (response to our request)
+      if (data.type === 'res') {
+        if (!data.ok) {
+          addMsg('error', data.error?.message || extractText(data.payload) || 'Fout opgetreden');
+        }
+        // chat.send ok response just confirms send - no need to display
+        return;
+      }
+
+      // Handle direct message/response types
+      if (data.type === 'response' || data.type === 'message') {
+        addMsg('bot', extractText(data) || JSON.stringify(data));
+        return;
+      }
+
+      // Handle errors
+      if (data.type === 'error') {
+        addMsg('error', extractText(data) || JSON.stringify(data));
+        return;
+      }
+
+      // Other events with useful payload
+      if (data.type === 'event' && data.payload) {
+        const text = extractText(data.payload);
+        if (text) addMsg('system', text);
+        return;
+      }
+
+      // Debug: log unhandled messages
+      console.log('[ClawBot] Unhandled:', data);
     }
 
     function wsSend(payload) {
