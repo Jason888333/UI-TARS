@@ -695,30 +695,53 @@
         pendingMessages = [];
       }
 
-      // Helper to extract text from any object
+      // Deep extract text from any nested object
       function extractText(obj) {
         if (!obj) return null;
         if (typeof obj === 'string') return obj;
-        // Try common text fields
-        return obj.text || obj.content || obj.message || obj.delta || obj.body || null;
+        if (Array.isArray(obj)) {
+          // Handle content arrays like [{type:"text", text:"..."}]
+          return obj.map(item => extractText(item)).filter(Boolean).join('') || null;
+        }
+        // Try string fields first
+        for (const key of ['text', 'content', 'message', 'delta', 'body', 'data']) {
+          if (typeof obj[key] === 'string') return obj[key];
+        }
+        // Try nested content (e.g. content: [{text: "..."}])
+        if (Array.isArray(obj.content)) {
+          return obj.content.map(item => extractText(item)).filter(Boolean).join('') || null;
+        }
+        // Try nested object fields
+        if (typeof obj.content === 'object' && obj.content) return extractText(obj.content);
+        if (typeof obj.message === 'object' && obj.message) return extractText(obj.message);
+        return null;
       }
+
+      // Stringify safely for debug display
+      function toStr(obj) {
+        if (typeof obj === 'string') return obj;
+        try { return JSON.stringify(obj, null, 2); } catch { return String(obj); }
+      }
+
+      // Log all incoming messages to console for debugging
+      console.log('[ClawBot] ←', data.type, data.event || data.method || '', data);
 
       // Handle chat events (streamed responses from agent)
       if (data.type === 'event' && data.event?.startsWith('chat:')) {
         const p = data.payload;
         if (data.event === 'chat:delta' || data.event === 'chat:message') {
-          const text = extractText(p) || (p?.delta) || (p?.content?.[0]?.text);
+          const text = extractText(p);
           if (text) addMsg('bot', text);
+          else addMsg('bot', toStr(p));
         } else if (data.event === 'chat:final') {
-          // Remove typing, show final message if not already shown
           const typing = chatLog.querySelector('.typing');
           if (typing) typing.remove();
-          const text = extractText(p) || (p?.content?.[0]?.text);
+          const text = extractText(p);
           if (text) addMsg('bot', text);
         } else if (data.event === 'chat:thinking') {
           showTyping();
         } else if (data.event === 'chat:error') {
-          addMsg('error', extractText(p) || JSON.stringify(p));
+          addMsg('error', extractText(p) || toStr(p));
         }
         return;
       }
@@ -727,7 +750,7 @@
       if (data.type === 'event' && data.event?.startsWith('agent.')) {
         const p = data.payload;
         if (data.event === 'agent.message') {
-          addMsg('bot', extractText(p) || JSON.stringify(p));
+          addMsg('bot', extractText(p) || toStr(p));
         } else if (data.event === 'agent.thinking' || data.event === 'agent.working') {
           showTyping();
         } else if (data.event === 'agent.done') {
@@ -750,33 +773,31 @@
       // Handle res (response to our request)
       if (data.type === 'res') {
         if (!data.ok) {
-          addMsg('error', data.error?.message || extractText(data.payload) || 'Fout opgetreden');
+          addMsg('error', data.error?.message || extractText(data.payload) || toStr(data.error || data.payload));
         }
-        // chat.send ok response just confirms send - no need to display
-        return;
-      }
-
-      // Handle direct message/response types
-      if (data.type === 'response' || data.type === 'message') {
-        addMsg('bot', extractText(data) || JSON.stringify(data));
         return;
       }
 
       // Handle errors
       if (data.type === 'error') {
-        addMsg('error', extractText(data) || JSON.stringify(data));
+        addMsg('error', extractText(data) || toStr(data));
         return;
       }
 
-      // Other events with useful payload
+      // All other events - try to extract text, otherwise show as JSON
       if (data.type === 'event' && data.payload) {
         const text = extractText(data.payload);
-        if (text) addMsg('system', text);
+        if (text) {
+          addMsg('bot', text);
+        } else {
+          // Show event type + payload as debug info
+          addMsg('system', data.event + ': ' + toStr(data.payload));
+        }
         return;
       }
 
-      // Debug: log unhandled messages
-      console.log('[ClawBot] Unhandled:', data);
+      // Fallback: show raw JSON
+      addMsg('bot', toStr(data));
     }
 
     function wsSend(payload) {
