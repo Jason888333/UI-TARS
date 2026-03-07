@@ -700,109 +700,100 @@
         pendingMessages = [];
       }
 
-      // Deep extract text from any nested object
-      function extractText(obj) {
-        if (!obj) return null;
-        if (typeof obj === 'string') return obj;
-        if (Array.isArray(obj)) {
-          // Handle content arrays like [{type:"text", text:"..."}]
-          return obj.map(item => extractText(item)).filter(Boolean).join('') || null;
-        }
-        // Try string fields first
-        for (const key of ['text', 'content', 'message', 'delta', 'body', 'data']) {
-          if (typeof obj[key] === 'string') return obj[key];
-        }
-        // Try nested content (e.g. content: [{text: "..."}])
-        if (Array.isArray(obj.content)) {
-          return obj.content.map(item => extractText(item)).filter(Boolean).join('') || null;
-        }
-        // Try nested object fields
-        if (typeof obj.content === 'object' && obj.content) return extractText(obj.content);
-        if (typeof obj.message === 'object' && obj.message) return extractText(obj.message);
-        return null;
-      }
+      // ========== OpenClaw Event Handlers ==========
+      // Event format: { type:"event", event:"agent"|"chat"|"health"|"tick", payload:{...} }
+      // Agent payload: { runId, stream:"lifecycle"|"assistant"|"tool"|"error", data:{...}, sessionKey, seq, ts }
+      // Chat payload:  { runId, sessionKey, seq, state:"done"|"error", errorMessage?, finalText? }
 
-      // Stringify safely for debug display
-      function toStr(obj) {
-        if (typeof obj === 'string') return obj;
-        try { return JSON.stringify(obj, null, 2); } catch { return String(obj); }
-      }
+      const p = data.payload;
 
-      // Log all incoming messages to console for debugging
-      console.log('[ClawBot] ←', data.type, data.event || data.method || '', data);
+      // --- "agent" events ---
+      if (data.type === 'event' && data.event === 'agent') {
+        const stream = p?.stream;
+        const d = p?.data;
 
-      // Handle chat events (streamed responses from agent)
-      if (data.type === 'event' && data.event?.startsWith('chat:')) {
-        const p = data.payload;
-        if (data.event === 'chat:delta' || data.event === 'chat:message') {
-          const text = extractText(p);
+        if (stream === 'lifecycle') {
+          if (d?.phase === 'start') {
+            showTyping();
+          } else if (d?.phase === 'end' || d?.phase === 'done') {
+            const typing = chatLog.querySelector('.typing');
+            if (typing) typing.remove();
+          } else if (d?.phase === 'error') {
+            const typing = chatLog.querySelector('.typing');
+            if (typing) typing.remove();
+            addMsg('error', d.error || 'Onbekende fout');
+          }
+        } else if (stream === 'assistant' || stream === 'message') {
+          // Assistant text output
+          const text = d?.text || d?.content || d?.delta || d?.message;
+          if (text) {
+            addMsg('bot', text);
+          } else if (d) {
+            // Try to find text in nested content array
+            if (Array.isArray(d.content)) {
+              const combined = d.content.map(c => c.text || c.content || '').join('');
+              if (combined) addMsg('bot', combined);
+            }
+          }
+        } else if (stream === 'tool' || stream === 'tool_use' || stream === 'tool_result') {
+          // Tool usage - show brief status
+          const toolName = d?.name || d?.tool || d?.toolName;
+          if (toolName) {
+            addMsg('system', 'Tool: ' + toolName);
+          }
+        } else if (stream === 'error') {
+          // Stream error (e.g. seq gap) - ignore unless it has a user-facing message
+          if (d?.error) addMsg('error', d.error);
+        } else if (stream === 'delta' || stream === 'text') {
+          // Streaming text delta
+          const text = d?.text || d?.delta || d?.content;
           if (text) addMsg('bot', text);
-          else addMsg('bot', toStr(p));
-        } else if (data.event === 'chat:final') {
-          const typing = chatLog.querySelector('.typing');
-          if (typing) typing.remove();
-          const text = extractText(p);
+        }
+        // Ignore other agent streams silently
+        return;
+      }
+
+      // --- "chat" events ---
+      if (data.type === 'event' && data.event === 'chat') {
+        const typing = chatLog.querySelector('.typing');
+        if (typing) typing.remove();
+
+        if (p?.state === 'error') {
+          addMsg('error', p.errorMessage || 'Chat fout');
+        } else if (p?.state === 'done' || p?.state === 'complete') {
+          const text = p.finalText || p.text || p.content || p.message;
           if (text) addMsg('bot', text);
-        } else if (data.event === 'chat:thinking') {
-          showTyping();
-        } else if (data.event === 'chat:error') {
-          addMsg('error', extractText(p) || toStr(p));
         }
         return;
       }
 
-      // Handle agent events
-      if (data.type === 'event' && data.event?.startsWith('agent.')) {
-        const p = data.payload;
-        if (data.event === 'agent.message') {
-          addMsg('bot', extractText(p) || toStr(p));
-        } else if (data.event === 'agent.thinking' || data.event === 'agent.working') {
-          showTyping();
-        } else if (data.event === 'agent.done') {
-          const typing = chatLog.querySelector('.typing');
-          if (typing) typing.remove();
-        }
+      // --- "health" events --- (ignore, just update status)
+      if (data.type === 'event' && data.event === 'health') {
+        if (p?.ok) setStatus('connected', 'Verbonden');
         return;
       }
 
-      // Handle lifecycle events
-      if (data.type === 'event' && data.event?.startsWith('lifecycle:')) {
-        if (data.event === 'lifecycle:start') showTyping();
-        if (data.event === 'lifecycle:end') {
-          const typing = chatLog.querySelector('.typing');
-          if (typing) typing.remove();
-        }
+      // --- "tick" events --- (heartbeat, ignore)
+      if (data.type === 'event' && data.event === 'tick') {
         return;
       }
 
-      // Handle res (response to our request)
+      // --- Response to our requests ---
       if (data.type === 'res') {
         if (!data.ok) {
-          addMsg('error', data.error?.message || extractText(data.payload) || toStr(data.error || data.payload));
+          addMsg('error', data.error?.message || p?.message || JSON.stringify(data.error || p));
         }
         return;
       }
 
-      // Handle errors
+      // --- Direct errors ---
       if (data.type === 'error') {
-        addMsg('error', extractText(data) || toStr(data));
+        addMsg('error', data.message || data.error || JSON.stringify(data));
         return;
       }
 
-      // All other events - try to extract text, otherwise show as JSON
-      if (data.type === 'event' && data.payload) {
-        const text = extractText(data.payload);
-        if (text) {
-          addMsg('bot', text);
-        } else {
-          // Show event type + payload as debug info
-          addMsg('system', data.event + ': ' + toStr(data.payload));
-        }
-        return;
-      }
-
-      // Fallback: show raw JSON
-      addMsg('bot', toStr(data));
+      // --- Fallback: show as JSON for debugging ---
+      addMsg('system', (data.event || data.type || 'unknown') + ': ' + JSON.stringify(p || data, null, 2));
     }
 
     function wsSend(payload) {
