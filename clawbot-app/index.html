@@ -582,7 +582,7 @@
         const ts = Date.now();
 
         // Build v2 signature payload: v2|deviceId|clientId|clientMode|role|scopes|timestamp|token|nonce
-        const scopes = ['operator.read', 'operator.write'];
+        const scopes = ['operator.read', 'operator.write', 'operator.admin', 'operator.approvals', 'operator.pairing'];
         const sigPayload = [
           'v2',
           keys.deviceId,
