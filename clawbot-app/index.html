@@ -500,59 +500,140 @@
     }
 
     let connectReqId = null;
+    let deviceKeys = null; // { privateKey, publicKey, publicKeyB64, deviceId }
 
     function generateId() {
       return 'clawbot-' + Math.random().toString(36).slice(2, 10);
     }
 
-    function handleChallenge(data) {
-      const nonce = data.payload?.nonce || data.nonce;
-
-      // Get gateway token from settings (if configured)
-      const token = document.getElementById('gatewayToken').value.trim();
-
-      connectReqId = generateId();
-
-      // Send proper connect request per OpenClaw gateway protocol
-      const connectReq = {
-        type: 'req',
-        id: connectReqId,
-        method: 'connect',
-        params: {
-          minProtocol: 3,
-          maxProtocol: 3,
-          client: {
-            id: 'clawbot-controller',
-            version: '1.0.0',
-            platform: 'web',
-            mode: 'operator'
-          },
-          role: 'operator',
-          scopes: ['operator.read', 'operator.write'],
-          caps: [],
-          commands: [],
-          permissions: {},
-          auth: token ? { token: token } : {},
-          locale: navigator.language || 'nl-NL',
-          userAgent: 'clawbot-controller/1.0.0',
-          device: {
-            id: getDeviceId(),
-            nonce: nonce
-          }
-        }
-      };
-
-      ws.send(JSON.stringify(connectReq));
-      addMsg('system', 'Authenticatie...');
+    // Base64url encode (no padding)
+    function b64url(buffer) {
+      const bytes = new Uint8Array(buffer);
+      let binary = '';
+      bytes.forEach(b => binary += String.fromCharCode(b));
+      return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
     }
 
-    function getDeviceId() {
-      let id = localStorage.getItem('clawbot-device-id');
-      if (!id) {
-        id = 'clawbot-' + crypto.randomUUID();
-        localStorage.setItem('clawbot-device-id', id);
+    // SHA-256 hex hash
+    async function sha256hex(data) {
+      const hash = await crypto.subtle.digest('SHA-256', data);
+      return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, '0')).join('');
+    }
+
+    // Generate or load Ed25519 keypair for device identity
+    async function getDeviceKeys() {
+      if (deviceKeys) return deviceKeys;
+
+      // Try loading stored keys
+      const stored = localStorage.getItem('clawbot-device-keys');
+      if (stored) {
+        try {
+          const parsed = JSON.parse(stored);
+          const privateKey = await crypto.subtle.importKey(
+            'pkcs8', Uint8Array.from(atob(parsed.priv), c => c.charCodeAt(0)),
+            { name: 'Ed25519' }, false, ['sign']
+          );
+          const publicKey = await crypto.subtle.importKey(
+            'raw', Uint8Array.from(atob(parsed.pub), c => c.charCodeAt(0)),
+            { name: 'Ed25519' }, true, ['verify']
+          );
+          deviceKeys = {
+            privateKey,
+            publicKey,
+            publicKeyB64: parsed.pubB64,
+            deviceId: parsed.deviceId
+          };
+          return deviceKeys;
+        } catch (e) {
+          localStorage.removeItem('clawbot-device-keys');
+        }
       }
-      return id;
+
+      // Generate new Ed25519 keypair
+      const keyPair = await crypto.subtle.generateKey('Ed25519', true, ['sign', 'verify']);
+      const pubRaw = await crypto.subtle.exportKey('raw', keyPair.publicKey);
+      const privPkcs8 = await crypto.subtle.exportKey('pkcs8', keyPair.privateKey);
+      const publicKeyB64 = b64url(pubRaw);
+      const deviceId = await sha256hex(pubRaw);
+
+      // Store for reuse
+      localStorage.setItem('clawbot-device-keys', JSON.stringify({
+        priv: btoa(String.fromCharCode(...new Uint8Array(privPkcs8))),
+        pub: btoa(String.fromCharCode(...new Uint8Array(pubRaw))),
+        pubB64: publicKeyB64,
+        deviceId: deviceId
+      }));
+
+      deviceKeys = {
+        privateKey: keyPair.privateKey,
+        publicKey: keyPair.publicKey,
+        publicKeyB64,
+        deviceId
+      };
+      return deviceKeys;
+    }
+
+    async function handleChallenge(data) {
+      const nonce = data.payload?.nonce || data.nonce;
+      const token = document.getElementById('gatewayToken').value.trim();
+
+      try {
+        const keys = await getDeviceKeys();
+        const ts = Date.now();
+
+        // Build v2 signature payload: v2|deviceId|clientId|clientMode|role|scopes|timestamp|token|nonce
+        const scopes = ['operator.read', 'operator.write'];
+        const sigPayload = [
+          'v2',
+          keys.deviceId,
+          'openclaw-control-ui',
+          'webchat',
+          'operator',
+          scopes.join(','),
+          ts.toString(),
+          token || '',
+          nonce
+        ].join('|');
+
+        // Sign with Ed25519
+        const sigData = new TextEncoder().encode(sigPayload);
+        const signature = await crypto.subtle.sign('Ed25519', keys.privateKey, sigData);
+        const signatureB64 = b64url(signature);
+
+        connectReqId = generateId();
+
+        const connectReq = {
+          type: 'req',
+          id: connectReqId,
+          method: 'connect',
+          params: {
+            minProtocol: 3,
+            maxProtocol: 3,
+            client: {
+              id: 'openclaw-control-ui',
+              version: '1.0.0',
+              platform: navigator.platform || 'web',
+              mode: 'webchat'
+            },
+            role: 'operator',
+            scopes: scopes,
+            auth: token ? { token: token } : {},
+            device: {
+              id: keys.deviceId,
+              publicKey: keys.publicKeyB64,
+              signature: signatureB64,
+              signedAt: ts,
+              nonce: nonce
+            }
+          }
+        };
+
+        ws.send(JSON.stringify(connectReq));
+        addMsg('system', 'Authenticatie...');
+      } catch (e) {
+        addMsg('error', 'Crypto fout: ' + e.message);
+        setStatus('', 'Auth mislukt');
+      }
     }
 
     function handleResponse(data) {
