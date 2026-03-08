@@ -53,7 +53,8 @@ cat > "$CONFIG_FILE" << 'CONFEOF'
   "agents": {
     "defaults": {
       "model": {
-        "primary": "openai/gpt-4o-mini"
+        "primary": "openai/gpt-4o-mini",
+        "fallbacks": []
       },
       "models": {
         "openai/gpt-4o-mini": {
