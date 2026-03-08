@@ -1,0 +1,21 @@
+{
+  "env": {
+    "OPENAI_API_KEY": "${OPENAI_API_KEY}"
+  },
+  "agents": {
+    "defaults": {
+      "model": {
+        "primary": "openai/gpt-4o"
+      },
+      "models": {
+        "openai/gpt-4o": {
+          "params": {
+            "transport": "auto",
+            "openaiWsWarmup": true,
+            "serviceTier": "default"
+          }
+        }
+      }
+    }
+  }
+}
