@@ -53,10 +53,10 @@ cat > "$CONFIG_FILE" << 'CONFEOF'
   "agents": {
     "defaults": {
       "model": {
-        "primary": "openai/gpt-4o"
+        "primary": "openai/gpt-4o-mini"
       },
       "models": {
-        "openai/gpt-4o": {
+        "openai/gpt-4o-mini": {
           "params": {
             "transport": "auto",
             "openaiWsWarmup": true,
